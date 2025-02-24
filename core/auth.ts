@@ -934,8 +934,8 @@ export class AbstraxionAuth {
       this.isLoginInProgress = true;
       // Get local keypair and granter address from either URL param (if new) or localStorage (if existing)
       const keypair = await this.getLocalKeypair();
-      const searchParams = new URLSearchParams(window.location.search);
-      const granter = (await this.getGranter()) || searchParams.get("granter");
+      //   const searchParams = new URLSearchParams(window.location.search); // TODO: Find react-native friendly alternative
+      const granter = ""; // force conditional
 
       // If both exist, we can assume user is either 1. already logged in and grants have been created for the temp key, or 2. been redirected with the granter url param
       // In either case, we poll for grants and make the appropriate state changes to reflect a "logged in" state
