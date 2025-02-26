@@ -1,3 +1,4 @@
+import * as WebBrowser from "expo-web-browser";
 import { GasPrice } from "@cosmjs/stargate";
 import { CosmWasmClient } from "@cosmjs/cosmwasm-stargate";
 // import { fetchConfig } from "@burnt-labs/constants";
@@ -295,9 +296,33 @@ export class AbstraxionAuth {
         throw new Error("AbstraxionAuth needs to be configured.");
       }
       const userAddress = await this.getKeypairAddress();
-      //   const { dashboardUrl } = await fetchConfig(this.rpcUrl); // commented for now so don't need constants dep
-      const dashboardUrl = "https://settings.testnet.burnt.com/";
-      this.configureUrlAndRedirect(dashboardUrl, userAddress);
+      const treasuryAddress =
+        "xion1nn55ch09p4a4z30am967n5n8r75m2ag3s3sujutxfmchhsxqtg3qghdg7h";
+
+      const redirectUri = "abstraxion-expo://auth"; //comes from app.json
+
+      const dashboardUrl = `https://settings.testnet.burnt.com/?treasury=${treasuryAddress}&grantee=${userAddress}&redirect_uri=${encodeURIComponent(
+        redirectUri
+      )}`;
+
+      // await Linking.openURL(dashboardUrl); // this is a hard app redirect
+      const result = await WebBrowser.openAuthSessionAsync(
+        dashboardUrl,
+        redirectUri
+      ); // this is an in-app safari tab
+
+      //   react-native workaround
+      if (result.type === "success" && result.url) {
+        console.log("Returned URL:", result.url);
+        const url = new URL(result.url);
+        const granterAddress = url.searchParams.get("granter");
+
+        if (granterAddress) {
+          console.log("Granter:", granterAddress);
+          this.setGranter(granterAddress);
+          // perform grant poll/check
+        }
+      }
     } catch (error) {
       console.warn(
         "Something went wrong trying to redirect to XION dashboard: ",
@@ -822,6 +847,7 @@ export class AbstraxionAuth {
 
     while (retries < maxRetries) {
       try {
+        console.log("polling...");
         const baseUrl = `${pollBaseUrl}/cosmos/authz/v1beta1/grants`;
         const url = new URL(baseUrl);
         const params = new URLSearchParams({
@@ -934,12 +960,12 @@ export class AbstraxionAuth {
       this.isLoginInProgress = true;
       // Get local keypair and granter address from either URL param (if new) or localStorage (if existing)
       const keypair = await this.getLocalKeypair();
-      //   const searchParams = new URLSearchParams(window.location.search); // TODO: Find react-native friendly alternative
-      const granter = ""; // force conditional
+      const granter = await this.getGranter();
 
       // If both exist, we can assume user is either 1. already logged in and grants have been created for the temp key, or 2. been redirected with the granter url param
       // In either case, we poll for grants and make the appropriate state changes to reflect a "logged in" state
       if (keypair && granter) {
+        console.log("existing keypair flow");
         const accounts = await keypair.getAccounts();
         const keypairAddress = accounts[0].address;
         const pollSuccess = await this.pollForGrants(keypairAddress, granter);
@@ -951,12 +977,14 @@ export class AbstraxionAuth {
         this.abstractAccount = keypair;
         this.triggerAuthStateChange(true);
 
-        if (typeof window !== undefined) {
-          const currentUrl = new URL(window.location.href);
-          currentUrl.searchParams.delete("granted");
-          currentUrl.searchParams.delete("granter");
-          history.pushState({}, "", currentUrl.href);
-        }
+        console.log("successfully logged in...");
+
+        // if (typeof window !== undefined) {
+        //   const currentUrl = new URL(window.location.href);
+        //   currentUrl.searchParams.delete("granted");
+        //   currentUrl.searchParams.delete("granter");
+        //   history.pushState({}, "", currentUrl.href);
+        // }
       } else {
         // If there isn't an existing keypair, or there isn't a granter in either localStorage or the url params, we want to start from scratch
         // Generate new keypair and redirect to dashboard
@@ -976,6 +1004,7 @@ export class AbstraxionAuth {
    */
   private async newKeypairFlow(): Promise<void> {
     try {
+      console.log("new keypair flow");
       await this.generateAndStoreTempAccount();
       await this.redirectToDashboard();
     } catch (error) {
