@@ -52,8 +52,6 @@ export class ReactNativeRedirectStrategy implements RedirectStrategy {
     return Linking.createURL("");
   }
 
-  // Differences in android vs ios
-  // callback url in android version leads to a "screen doesn't exist"
   async redirect(url: string): Promise<void> {
     try {
       const result = await WebBrowser.openAuthSessionAsync(

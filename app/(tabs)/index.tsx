@@ -16,7 +16,7 @@ const rpcEndpoint = "https://testnet-rpc.xion-api.com:443";
 const restUrl = "https://testnet-api.xion-api.com:443";
 const treasuryAddress =
   "xion1nn55ch09p4a4z30am967n5n8r75m2ag3s3sujutxfmchhsxqtg3qghdg7h";
-const redirectUri = "abstraxion-expo://auth"; //comes from app.json
+const redirectUri = "abstraxion-expo://"; //comes from app.json
 
 export default function Index() {
   useEffect(() => {
