@@ -2,8 +2,15 @@ import { View, StyleSheet, Button, Text } from "react-native";
 import { useCallback, useEffect, useState } from "react";
 import { AbstraxionAuth } from "@/core/auth";
 import { SignArbSecp256k1HdWallet } from "@/core/signArbWallet";
+import {
+  ReactNativeRedirectStrategy,
+  ReactNativeStorageStrategy,
+} from "@/core/strategies";
 
-const auth = new AbstraxionAuth();
+const auth = new AbstraxionAuth(
+  new ReactNativeStorageStrategy(),
+  new ReactNativeRedirectStrategy()
+);
 
 const rpcEndpoint = "https://testnet-rpc.xion-api.com:443";
 const restUrl = "https://testnet-api.xion-api.com:443";

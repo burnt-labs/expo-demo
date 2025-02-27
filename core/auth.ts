@@ -1,11 +1,9 @@
-import * as WebBrowser from "expo-web-browser";
 import { GasPrice } from "@cosmjs/stargate";
 import { CosmWasmClient } from "@cosmjs/cosmwasm-stargate";
 // import { fetchConfig } from "@burnt-labs/constants";
 import { GranteeSignerClient } from "./granteeSignerClient";
 import { SignArbSecp256k1HdWallet } from "./signArbWallet";
-import { Linking } from "react-native";
-import { storage } from "./utils";
+import { RedirectStrategy, StorageStrategy } from "./strategies";
 
 // COMPARISON FUNCTIONS HAVE BEEN COMMENTED FOR SIMPLIFICATION
 
@@ -58,10 +56,28 @@ export class AbstraxionAuth {
   isLoggedIn = false;
   authStateChangeSubscribers: ((isLoggedIn: boolean) => void)[] = [];
 
+  private storageStrategy: StorageStrategy;
+  private redirectStrategy: RedirectStrategy;
+
   /**
    * Creates an instance of the AbstraxionAuth class.
    */
-  constructor() {}
+  constructor(
+    storageStrategy: StorageStrategy,
+    redirectStrategy: RedirectStrategy
+  ) {
+    this.storageStrategy = storageStrategy;
+    this.redirectStrategy = redirectStrategy;
+
+    if (this.redirectStrategy.onRedirectComplete) {
+      this.redirectStrategy.onRedirectComplete(async (params) => {
+        if (params.granter) {
+          await this.setGranter(params.granter);
+          await this.login();
+        }
+      });
+    }
+  }
 
   /**
    * Updates AbstraxionAuth instance with user config
@@ -129,7 +145,7 @@ export class AbstraxionAuth {
    */
   async getGranter(): Promise<string> {
     try {
-      const granterAddress = await storage.getItem(
+      const granterAddress = await this.storageStrategy.getItem(
         "xion-authz-granter-account"
       );
       if (!granterAddress || granterAddress === "undefined") {
@@ -147,7 +163,7 @@ export class AbstraxionAuth {
    */
   private async removeGranterAddress(): Promise<void> {
     try {
-      await storage.removeItem("xion-authz-granter-account");
+      await this.storageStrategy.removeItem("xion-authz-granter-account");
     } catch (error) {
       console.warn("Error removing granter address:", error);
     }
@@ -158,7 +174,7 @@ export class AbstraxionAuth {
    */
   private async setGranter(address: string): Promise<void> {
     try {
-      await storage.setItem("xion-authz-granter-account", address);
+      await this.storageStrategy.setItem("xion-authz-granter-account", address);
     } catch (error) {
       console.warn("Error setting granter:", error);
     }
@@ -169,7 +185,9 @@ export class AbstraxionAuth {
    */
   async getLocalKeypair(): Promise<SignArbSecp256k1HdWallet | undefined> {
     try {
-      const localKeypair = await storage.getItem("xion-authz-temp-account");
+      const localKeypair = await this.storageStrategy.getItem(
+        "xion-authz-temp-account"
+      );
       if (!localKeypair) {
         return undefined;
       }
@@ -192,7 +210,10 @@ export class AbstraxionAuth {
     });
 
     const serializedKeypair = await keypair.serialize("abstraxion");
-    await storage.setItem("xion-authz-temp-account", serializedKeypair);
+    await this.storageStrategy.setItem(
+      "xion-authz-temp-account",
+      serializedKeypair
+    );
     await this.removeGranterAddress(); // Prevent multiple truth issue
 
     return keypair;
@@ -296,33 +317,8 @@ export class AbstraxionAuth {
         throw new Error("AbstraxionAuth needs to be configured.");
       }
       const userAddress = await this.getKeypairAddress();
-      const treasuryAddress =
-        "xion1nn55ch09p4a4z30am967n5n8r75m2ag3s3sujutxfmchhsxqtg3qghdg7h";
-
-      const redirectUri = "abstraxion-expo://auth"; //comes from app.json
-
-      const dashboardUrl = `https://settings.testnet.burnt.com/?treasury=${treasuryAddress}&grantee=${userAddress}&redirect_uri=${encodeURIComponent(
-        redirectUri
-      )}`;
-
-      // await Linking.openURL(dashboardUrl); // this is a hard app redirect
-      const result = await WebBrowser.openAuthSessionAsync(
-        dashboardUrl,
-        redirectUri
-      ); // this is an in-app safari tab
-
-      //   react-native workaround
-      if (result.type === "success" && result.url) {
-        console.log("Returned URL:", result.url);
-        const url = new URL(result.url);
-        const granterAddress = url.searchParams.get("granter");
-
-        if (granterAddress) {
-          console.log("Granter:", granterAddress);
-          this.setGranter(granterAddress);
-          // perform grant poll/check
-        }
-      }
+      const dashboardUrl = "https://settings.testnet.burnt.com"; // this will come from fetchConfig()
+      this.configureUrlAndRedirect(dashboardUrl, userAddress);
     } catch (error) {
       console.warn(
         "Something went wrong trying to redirect to XION dashboard: ",
@@ -339,7 +335,7 @@ export class AbstraxionAuth {
     userAddress: string
   ): Promise<void> {
     const currentUrl =
-      this.callbackUrl || (await Linking.getInitialURL()) || "";
+      this.callbackUrl || (await this.redirectStrategy.getCurrentUrl());
     const urlParams = new URLSearchParams();
 
     if (this.treasury) {
@@ -362,13 +358,7 @@ export class AbstraxionAuth {
     urlParams.set("redirect_uri", currentUrl);
 
     const queryString = urlParams.toString();
-    const url = `${dashboardUrl}?${queryString}`;
-
-    try {
-      await Linking.openURL(url);
-    } catch (error) {
-      console.warn("Error opening URL:", error);
-    }
+    await this.redirectStrategy.redirect(`${dashboardUrl}?${queryString}`);
   }
 
   //   /**
@@ -894,14 +884,12 @@ export class AbstraxionAuth {
    * Wipe persisted state and instance variables.
    */
   async logout(): Promise<void> {
-    try {
-      await storage.removeItem("xion-authz-temp-account");
-      await storage.removeItem("xion-authz-granter-account");
-      this.abstractAccount = undefined;
-      this.triggerAuthStateChange(false);
-    } catch (error) {
-      console.warn("Error during logout:", error);
-    }
+    await Promise.all([
+      this.storageStrategy.removeItem("xion-authz-temp-account"),
+      this.storageStrategy.removeItem("xion-authz-granter-account"),
+    ]);
+    this.abstractAccount = undefined;
+    this.triggerAuthStateChange(false);
   }
 
   /**
@@ -944,7 +932,7 @@ export class AbstraxionAuth {
 
   /**
    * Initiates the login process for the user.
-   * Checks if a local keypair and granter address exist, either from URL parameters or localStorage.
+   * Checks if a local keypair and granter address exist, either from URL parameters or storage.
    * If both exist, polls for grants and updates the authentication state if successful.
    * If not, generates a new keypair and redirects to the dashboard for grant issuance.
    *
@@ -960,7 +948,9 @@ export class AbstraxionAuth {
       this.isLoginInProgress = true;
       // Get local keypair and granter address from either URL param (if new) or localStorage (if existing)
       const keypair = await this.getLocalKeypair();
-      const granter = await this.getGranter();
+      const storedGranter = await this.getGranter();
+      const urlGranter = await this.redirectStrategy.getUrlParameter("granter");
+      const granter = storedGranter || urlGranter;
 
       // If both exist, we can assume user is either 1. already logged in and grants have been created for the temp key, or 2. been redirected with the granter url param
       // In either case, we poll for grants and make the appropriate state changes to reflect a "logged in" state
